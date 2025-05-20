@@ -490,6 +490,12 @@ class GRPOConfig(TrainingArguments):
             "all prompts are logged."
         },
     )
+    humanline: Optional[bool] = field(
+        default=False,
+        metadata={
+            "help": "Whether to use humanline"
+        },
+    )    
 
     def __post_init__(self):
         super().__post_init__()
