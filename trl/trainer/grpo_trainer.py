@@ -539,6 +539,7 @@ class GRPOTrainer(Trainer):
         model.warnings_issued["estimate_tokens"] = True
 
         self.humanline = args.humanline
+        self.humnaline_baseline = args.humanline_baseline
         self.humanline_gamma_R = 0.01
         self.humanline_beta_R = 1.0
         self.humanline_gamma_P = 0.5
@@ -558,7 +559,7 @@ class GRPOTrainer(Trainer):
 
         # Reference model
         self.beta = args.beta
-        if (self.beta == 0.0) and (args.humanline is False):
+        if (self.beta == 0.0) and (args.humanline is False) and (args.humnaline_baseline is False):
             # If beta is 0.0, the reference model is not needed
             self.ref_model = None
         elif is_deepspeed_zero3_enabled() or self.is_fsdp_enabled:
@@ -1346,7 +1347,6 @@ class GRPOTrainer(Trainer):
             per_token_kl = (
                 torch.exp(ref_per_token_logps - per_token_logps) - (ref_per_token_logps - per_token_logps) - 1
             )
-
         if self.humanline:
             assert self.ref_model is not None
             ref_per_token_logps = self._get_per_token_logps(
@@ -1354,6 +1354,12 @@ class GRPOTrainer(Trainer):
             )
             logratio = per_token_logps - ref_per_token_logps
             logratio = torch.where(self.get_humanline_mask(per_token_logps, ref_per_token_logps), logratio.detach(), logratio)
+        elif self.humnaline_baseline:
+            assert self.ref_model is not None
+            ref_per_token_logps = self._get_per_token_logps(
+                self.ref_model, input_ids, attention_mask, logits_to_keep
+            )
+            logratio = per_token_logps - ref_per_token_logps
         else:
             # When using num_iterations == 1 and steps_per_generation <= gradient_accumulation_steps
             # old_per_token_logps == per_token_logps, so we can skip it's computation

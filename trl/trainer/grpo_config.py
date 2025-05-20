@@ -495,6 +495,12 @@ class GRPOConfig(TrainingArguments):
         metadata={
             "help": "Whether to use humanline"
         },
+    )
+    humanline_baseline: Optional[bool] = field(
+        default=False,
+        metadata={
+            "help": "baseline comparison for humanline"
+        },
     )    
 
     def __post_init__(self):
