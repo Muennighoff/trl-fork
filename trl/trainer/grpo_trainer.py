@@ -559,7 +559,7 @@ class GRPOTrainer(Trainer):
 
         # Reference model
         self.beta = args.beta
-        if (self.beta == 0.0) and (args.humanline is False) and (args.humnaline_baseline is False):
+        if (self.beta == 0.0) and (args.humanline is False) and (args.humanline_baseline is False):
             # If beta is 0.0, the reference model is not needed
             self.ref_model = None
         elif is_deepspeed_zero3_enabled() or self.is_fsdp_enabled:
