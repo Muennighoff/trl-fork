@@ -540,11 +540,8 @@ class GRPOTrainer(Trainer):
 
         self.humanline = args.humanline
         self.humnaline_baseline = args.humanline_baseline
-        self.humanline_gamma_R = 0.01
-        self.humanline_beta_R = 1.0
-        self.humanline_gamma_P = 0.5
-        self.humanline_beta_P = 1.0
-
+        self.humanline.log_epsilon_P: -1.0
+        self.humanline.log_epsilon_R: 1.5
 
         super().__init__(
             model=model,
@@ -1352,14 +1349,13 @@ class GRPOTrainer(Trainer):
             ref_per_token_logps = self._get_per_token_logps(
                 self.ref_model, input_ids, attention_mask, logits_to_keep
             )
-            logratio = per_token_logps - ref_per_token_logps
-            logratio = torch.where(self.get_humanline_mask(per_token_logps, ref_per_token_logps), logratio.detach(), logratio)
+            logratio = (per_token_logps - ref_per_token_logps).clamp(self.config.log_epsilon_P, self.config.log_epsilon_R).exp()
         elif self.humnaline_baseline:
             assert self.ref_model is not None
             ref_per_token_logps = self._get_per_token_logps(
                 self.ref_model, input_ids, attention_mask, logits_to_keep
             )
-            logratio = per_token_logps - ref_per_token_logps
+            logratio = (per_token_logps - ref_per_token_logps).exp()
         else:
             # When using num_iterations == 1 and steps_per_generation <= gradient_accumulation_steps
             # old_per_token_logps == per_token_logps, so we can skip it's computation
@@ -1368,11 +1364,10 @@ class GRPOTrainer(Trainer):
                 per_token_logps.detach() if inputs["old_per_token_logps"] is None else inputs["old_per_token_logps"]
             )
             logratio = per_token_logps - old_per_token_logps
-
+            coef_1 = torch.exp(logratio)
+            coef_2 = torch.clamp(coef_1, 1 - self.epsilon_low, 1 + self.epsilon_high)
         # Compute the loss
         advantages = inputs["advantages"]
-        coef_1 = torch.exp(logratio)
-        coef_2 = torch.clamp(coef_1, 1 - self.epsilon_low, 1 + self.epsilon_high)
 
         if self.args.delta is not None:
             # Use clamp instead of min to handle tensor-float comparison
@@ -1420,31 +1415,6 @@ class GRPOTrainer(Trainer):
         gathered_clip_ratio = self.accelerator.gather_for_metrics(clip_ratio)
         self._metrics[mode]["clip_ratio/region_mean"].append(gathered_clip_ratio.nanmean().item())
         return loss
-
-    def get_humanline_mask(self, policy_logps, reference_logps):
-        """
-        Return a boolean mask over tokens, where True means that the token has been rejected under humanline sampling.
-
-        Args:
-            policy_logps: token-level probabilities according to policy (microbatch_size, maximum sequence length)
-            reference_logps: token-level probabilities according to reference model (microbatch_size, maximum sequence length)
-
-        Returns:
-            The rejection mask (microbatch_size, sequence length)
-        """
-        forward_rv = torch.distributions.beta.Beta(self.humanline_gamma_R, self.humanline_beta_R)
-        forward_M = (reference_logps - policy_logps).exp().max().item()
-        forward_sample = forward_rv.sample(policy_logps.shape).to(self.accelerator.device)
-        forward_token_mask = (reference_logps - policy_logps).exp() < forward_M * forward_sample
-
-        backward_rv = torch.distributions.beta.Beta(self.humanline_gamma_P, self.humanline_beta_P)
-        backward_sample = backward_rv.sample(policy_logps.shape).to(self.accelerator.device)
-        backward_M = (policy_logps - reference_logps).exp().max().item()
-        backward_token_mask = (policy_logps - reference_logps).exp() < backward_M * backward_sample
-
-        humanline_mask = forward_token_mask | backward_token_mask
-        
-        return humanline_mask
 
     def prediction_step(self, model, inputs, prediction_loss_only, ignore_keys: Optional[list[str]] = None):
         inputs = self._prepare_inputs(inputs)
