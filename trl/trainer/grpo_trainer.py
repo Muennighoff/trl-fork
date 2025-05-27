@@ -540,8 +540,8 @@ class GRPOTrainer(Trainer):
 
         self.humanline = args.humanline
         self.humnaline_baseline = args.humanline_baseline
-        self.humanline.log_epsilon_P: -1.0
-        self.humanline.log_epsilon_R: 1.5
+        self.log_epsilon_P: -1.0
+        self.log_epsilon_R: 1.5
 
         super().__init__(
             model=model,
@@ -1349,7 +1349,7 @@ class GRPOTrainer(Trainer):
             ref_per_token_logps = self._get_per_token_logps(
                 self.ref_model, input_ids, attention_mask, logits_to_keep
             )
-            logratio = (per_token_logps - ref_per_token_logps).clamp(self.config.log_epsilon_P, self.config.log_epsilon_R).exp()
+            logratio = (per_token_logps - ref_per_token_logps).clamp(self.log_epsilon_P, self.log_epsilon_R).exp()
         elif self.humnaline_baseline:
             assert self.ref_model is not None
             ref_per_token_logps = self._get_per_token_logps(
