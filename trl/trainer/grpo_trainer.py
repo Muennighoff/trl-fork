@@ -540,8 +540,8 @@ class GRPOTrainer(Trainer):
 
         self.humanline = args.humanline
         self.humnaline_baseline = args.humanline_baseline
-        self.log_epsilon_P: -1.0
-        self.log_epsilon_R: 1.5
+        self.log_epsilon_P = -1.0
+        self.log_epsilon_R = 1.5
 
         super().__init__(
             model=model,
@@ -1349,13 +1349,13 @@ class GRPOTrainer(Trainer):
             ref_per_token_logps = self._get_per_token_logps(
                 self.ref_model, input_ids, attention_mask, logits_to_keep
             )
-            logratio = (per_token_logps - ref_per_token_logps).clamp(self.log_epsilon_P, self.log_epsilon_R).exp()
+            coef_1 = (per_token_logps - ref_per_token_logps).clamp(self.log_epsilon_P, self.log_epsilon_R).exp()
         elif self.humnaline_baseline:
             assert self.ref_model is not None
             ref_per_token_logps = self._get_per_token_logps(
                 self.ref_model, input_ids, attention_mask, logits_to_keep
             )
-            logratio = (per_token_logps - ref_per_token_logps).exp()
+            coef_1 = (per_token_logps - ref_per_token_logps).exp()
         else:
             # When using num_iterations == 1 and steps_per_generation <= gradient_accumulation_steps
             # old_per_token_logps == per_token_logps, so we can skip it's computation
@@ -1365,7 +1365,9 @@ class GRPOTrainer(Trainer):
             )
             logratio = per_token_logps - old_per_token_logps
             coef_1 = torch.exp(logratio)
-            coef_2 = torch.clamp(coef_1, 1 - self.epsilon_low, 1 + self.epsilon_high)
+        
+        coef_2 = torch.clamp(coef_1, 1 - self.epsilon_low, 1 + self.epsilon_high)
+
         # Compute the loss
         advantages = inputs["advantages"]
 
@@ -1378,6 +1380,7 @@ class GRPOTrainer(Trainer):
 
         per_token_loss2 = coef_2 * advantages.unsqueeze(1)
         per_token_loss = -torch.min(per_token_loss1, per_token_loss2)
+
         if self.beta != 0.0:
             per_token_loss = per_token_loss + self.beta * per_token_kl
 
