@@ -122,12 +122,21 @@ class SyncRefModelCallback(TrainerCallback):
         else:
             SyncRefModelCallback._sync_target_model(model, target_model, alpha)
 
-    def on_step_end(self, args, state, control, **kwargs):
+    def on_pre_optimizer_step(self, args, state, control, **kwargs):
+        # It seems with DeepSpeed ZeRO 2 the model already changes before this pre_optimizer_step
+        # so it may not work as intended; it works as expected with DDP.
         model: PreTrainedModel = kwargs["model"]
-        if (self.ref_model is not None) and (state.global_step > 0) and (state.global_step % args.ref_model_sync_steps == 0):
+        if self.ref_model is not None and state.global_step % args.ref_model_sync_steps == 0:
             if self.accelerator:
                 model = self.accelerator.unwrap_model(model)
             self.sync_target_model(model, self.ref_model, args.ref_model_mixup_alpha)
+
+    def on_step_end(self, args, state, control, **kwargs):
+        model: PreTrainedModel = kwargs["model"]
+        # if self.ref_model is not None and state.global_step % args.ref_model_sync_steps == 0:
+        #     if self.accelerator:
+        #         model = self.accelerator.unwrap_model(model)
+        #     self.sync_target_model(model, self.ref_model, args.ref_model_mixup_alpha)
 
 
 class RichProgressCallback(TrainerCallback):

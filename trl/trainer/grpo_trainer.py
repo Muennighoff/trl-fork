@@ -539,7 +539,7 @@ class GRPOTrainer(Trainer):
         model.warnings_issued["estimate_tokens"] = True
 
         self.humanline = args.humanline
-        self.humnaline_baseline = args.humanline_baseline
+        self.humanline_baseline = args.humanline_baseline
         self.log_epsilon_P = -1.0
         self.log_epsilon_R = 1.5
 
@@ -1350,7 +1350,7 @@ class GRPOTrainer(Trainer):
                 self.ref_model, input_ids, attention_mask, logits_to_keep
             )
             coef_1 = (per_token_logps - ref_per_token_logps).clamp(self.log_epsilon_P, self.log_epsilon_R).exp()
-        elif self.humnaline_baseline:
+        elif self.humanline_baseline:
             assert self.ref_model is not None
             ref_per_token_logps = self._get_per_token_logps(
                 self.ref_model, input_ids, attention_mask, logits_to_keep
@@ -1365,7 +1365,7 @@ class GRPOTrainer(Trainer):
             )
             logratio = per_token_logps - old_per_token_logps
             coef_1 = torch.exp(logratio)
-        
+
         coef_2 = torch.clamp(coef_1, 1 - self.epsilon_low, 1 + self.epsilon_high)
 
         # Compute the loss
