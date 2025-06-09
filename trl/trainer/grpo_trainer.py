@@ -540,7 +540,7 @@ class GRPOTrainer(Trainer):
 
         self.humanline = args.humanline
         self.humanline_baseline = args.humanline_baseline
-        self.log_epsilon_P = -1.0
+        self.log_epsilon_P = -1.5
         self.log_epsilon_R = 1.5
 
         super().__init__(
