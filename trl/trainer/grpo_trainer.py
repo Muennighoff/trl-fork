@@ -1030,8 +1030,13 @@ class GRPOTrainer(Trainer):
                         )
                 else:
                     completion_ids = [None] * len(all_prompts_text)
+                    import time
+                    # time.sleep(3600) # Wait for 60 min
+                    time.sleep(5400) # Wait for 90 min
                 # Broadcast the completions from the main process to all processes, ensuring each process receives its
                 # corresponding slice.
+                print("Waiting")
+                self.accelerator.wait_for_everyone()
                 completion_ids = broadcast_object_list(completion_ids, from_process=0)
                 process_slice = slice(
                     self.accelerator.process_index * len(prompts),
