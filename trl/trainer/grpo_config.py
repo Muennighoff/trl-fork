@@ -501,8 +501,19 @@ class GRPOConfig(TrainingArguments):
         metadata={
             "help": "baseline comparison for humanline"
         },
-    )    
-
+    )
+    log_epsilon_P: Optional[float] = field(
+        default=-1.5,
+        metadata={
+            "help": "humanline lower bound"
+        },
+    )
+    log_epsilon_R: Optional[float] = field(
+        default=1.5,
+        metadata={
+            "help": "humanline upper bound"
+        },
+    )
     def __post_init__(self):
         super().__post_init__()
 
