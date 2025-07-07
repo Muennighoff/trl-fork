@@ -1032,9 +1032,9 @@ class GRPOTrainer(Trainer):
                     completion_ids = [None] * len(all_prompts_text)
                     import time
                     # time.sleep(600) # Wait for 10 min # for 32x off
-                    time.sleep(1800) # Wait for 30 min # for 128x off
+                    # time.sleep(2400) # Wait for 40 min # for 128x off
                     # time.sleep(3600) # Wait for 60 min # for 128x off
-                    # time.sleep(4200) # Wait for 70 min # for 128x off
+                    time.sleep(4200) # Wait for 70 min # for 128x off
                     # time.sleep(5400) # Wait for 90 min # for 256x off
                 # Broadcast the completions from the main process to all processes, ensuring each process receives its
                 # corresponding slice.
