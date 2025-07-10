@@ -80,6 +80,7 @@ if is_wandb_available():
 # rewards. When it's a string, it's a model ID, so it's loaded as a pretrained model.
 RewardFunc = Union[str, PreTrainedModel, Callable[[list, list], list[float]]]
 
+READY_FILE = "/data/niklas/s2/open-r1/completion_ready_v23.signal"  # Adjust path if needed
 
 class RepeatSampler(Sampler):
     """
@@ -1028,17 +1029,32 @@ class GRPOTrainer(Trainer):
                             max_tokens=self.max_completion_length,
                             guided_decoding_regex=self.guided_decoding_regex,
                         )
+                    with open(READY_FILE, "w") as f:
+                        f.write("done")
+                    print("Main process done generating completions. Signal file created.")
                 else:
                     completion_ids = [None] * len(all_prompts_text)
+                    print("Waiting for main process to finish...")
                     import time
-                    # time.sleep(600) # Wait for 10 min # for 32x off
-                    # time.sleep(2400) # Wait for 40 min # for 128x off
-                    # time.sleep(3600) # Wait for 60 min # for 128x off
-                    time.sleep(4200) # Wait for 70 min # for 128x off
-                    # time.sleep(5400) # Wait for 90 min # for 256x off
+                    # Wait indefinitely until the signal file appears
+                    while not os.path.exists(READY_FILE):
+                        time.sleep(60)
+                    print("Signal file detected. Proceeding.")
+
+                    # import time
+                    # # time.sleep(600) # Wait for 10 min # for 32x off
+                    # # time.sleep(2400) # Wait for 40 min # for 128x off
+                    # if self.state.global_step <= 1:
+                    #     print("Waiting for 60min")
+                    #     time.sleep(3600) # Wait for 60 min # for 128x off
+                    # else:
+                    #     print("Waiting for 90min")
+                    #     time.sleep(5400) # Wait for 90 min # for 256x off                        
+                    # # time.sleep(4200) # Wait for 70 min # for 128x off
+                    # # time.sleep(5400) # Wait for 90 min # for 256x off
                 # Broadcast the completions from the main process to all processes, ensuring each process receives its
                 # corresponding slice.
-                print("Waiting")
+                print("Waiting: ", self.accelerator.process_index)
                 self.accelerator.wait_for_everyone()
                 completion_ids = broadcast_object_list(completion_ids, from_process=0)
                 process_slice = slice(
@@ -1046,6 +1062,10 @@ class GRPOTrainer(Trainer):
                     (self.accelerator.process_index + 1) * len(prompts),
                 )
                 completion_ids = completion_ids[process_slice]
+
+                if self.accelerator.is_main_process and os.path.exists(READY_FILE):
+                    os.remove(READY_FILE)
+                    print("Signal file removed.")
 
             # Generate completions using colocated vLLM instances: each device holds vLLM copy and work on their own batch of prompts
             elif self.vllm_mode == "colocate":
