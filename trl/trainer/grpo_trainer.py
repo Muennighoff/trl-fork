@@ -80,7 +80,7 @@ if is_wandb_available():
 # rewards. When it's a string, it's a model ID, so it's loaded as a pretrained model.
 RewardFunc = Union[str, PreTrainedModel, Callable[[list, list], list[float]]]
 
-READY_FILE = "/data/niklas/s2/open-r1/completion_ready_v16.signal"  # Adjust path if needed
+READY_FILE = "/data/niklas/s2/open-r1/completion_ready_v15.signal"  # Adjust path if needed
 
 class RepeatSampler(Sampler):
     """
