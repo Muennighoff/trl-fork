@@ -80,10 +80,8 @@ if is_wandb_available():
 # rewards. When it's a string, it's a model ID, so it's loaded as a pretrained model.
 RewardFunc = Union[str, PreTrainedModel, Callable[[list, list], list[float]]]
 
-# READY_FILE = "/data/niklas/s2/open-r1/completion_ready_v15x.signal"  # Adjust path if needed
-# Make it time-based
 import datetime
-READY_FILE = f"./completion_ready_s28_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.signal"
+READY_FILE = f"./completion_ready_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.signal"
 
 class RepeatSampler(Sampler):
     """
