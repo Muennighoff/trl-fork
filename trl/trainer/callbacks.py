@@ -131,6 +131,7 @@ class SyncRefModelCallback(TrainerCallback):
             state_dict = self.accelerator.unwrap_model(model).state_dict()
             self.accelerator.unwrap_model(self.ref_model).load_state_dict(state_dict)
             self.accelerator.wait_for_everyone()
+            self.ref_model.eval()
 
     # def on_pre_optimizer_step(self, args, state, control, **kwargs):
     #     model: PreTrainedModel = kwargs["model"]
