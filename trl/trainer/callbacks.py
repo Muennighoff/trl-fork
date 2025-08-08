@@ -102,6 +102,7 @@ class SyncRefModelCallback(TrainerCallback):
     ):
         self.accelerator = accelerator
         self.ref_model = ref_model
+        self.policy_state_dict = None
 
     @staticmethod
     def _sync_target_model(model, target_model, alpha):
@@ -128,10 +129,23 @@ class SyncRefModelCallback(TrainerCallback):
         """
         model: PreTrainedModel = kwargs["model"]
         if self.ref_model is not None and state.global_step % args.ref_model_sync_steps == 0:
-            state_dict = self.accelerator.unwrap_model(model).state_dict()
-            self.accelerator.unwrap_model(self.ref_model).load_state_dict(state_dict)
-            self.accelerator.wait_for_everyone()
-            self.ref_model.eval()
+            self.policy_state_dict = self.accelerator.unwrap_model(model).state_dict()
+
+    def on_step_end(self, args, state, control, **kwargs):
+        self.accelerator.unwrap_model(self.ref_model).load_state_dict(self.policy_state_dict)
+        self.accelerator.wait_for_everyone()
+        self.ref_model.eval()
+
+    # def on_pre_optimizer_step(self, args, state, control, **kwargs):
+    #     """
+    #     Update the reference model to have the policy weights.
+    #     """
+    #     model: PreTrainedModel = kwargs["model"]
+    #     if self.ref_model is not None and state.global_step % args.ref_model_sync_steps == 0:
+    #         state_dict = self.accelerator.unwrap_model(model).state_dict()
+    #         self.accelerator.unwrap_model(self.ref_model).load_state_dict(state_dict)
+    #         self.accelerator.wait_for_everyone()
+    #         self.ref_model.eval()
 
     # def on_pre_optimizer_step(self, args, state, control, **kwargs):
     #     model: PreTrainedModel = kwargs["model"]
