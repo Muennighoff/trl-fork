@@ -1385,7 +1385,7 @@ class GRPOTrainer(Trainer):
             with torch.no_grad():
                 ref_per_token_logps = self._get_per_token_logps(
                     self.ref_model, input_ids, attention_mask, logits_to_keep
-                )
+                ).clamp(min=-6.9) # (since log 0.001 = -6.9)
             coef_1 = (per_token_logps - ref_per_token_logps).exp()
         else:
             # When using num_iterations == 1 and steps_per_generation <= gradient_accumulation_steps
