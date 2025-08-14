@@ -1378,14 +1378,14 @@ class GRPOTrainer(Trainer):
             with torch.no_grad():
                 ref_per_token_logps = self._get_per_token_logps(
                     self.ref_model, input_ids, attention_mask, logits_to_keep
-                ).clamp(min=-3)
+                )
             coef_1 = (per_token_logps - ref_per_token_logps).clamp(self.log_epsilon_P, self.log_epsilon_R).exp()
         elif self.humanline_baseline:
             assert self.ref_model is not None
             with torch.no_grad():
                 ref_per_token_logps = self._get_per_token_logps(
                     self.ref_model, input_ids, attention_mask, logits_to_keep
-                ).clamp(min=-3)
+                )
             coef_1 = (per_token_logps - ref_per_token_logps).exp()
         else:
             # When using num_iterations == 1 and steps_per_generation <= gradient_accumulation_steps
