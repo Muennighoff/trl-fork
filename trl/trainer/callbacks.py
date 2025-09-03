@@ -133,9 +133,9 @@ class SyncRefModelCallback(TrainerCallback):
 
     def on_step_end(self, args, state, control, **kwargs):
         self.accelerator.unwrap_model(self.ref_model).load_state_dict(self.policy_state_dict)
-        model: PreTrainedModel = kwargs["model"]
-        for target_param, copy_param in zip(self.ref_model.parameters(), model.parameters()):
-            target_param.data.mul_(1.0 - args.ref_model_mixup_alpha).add_(copy_param.data, alpha=args.ref_model_mixup_alpha)
+        # model: PreTrainedModel = kwargs["model"]
+        # for target_param, copy_param in zip(self.ref_model.parameters(), model.parameters()):
+        #     target_param.data.mul_(1.0 - args.ref_model_mixup_alpha).add_(copy_param.data, alpha=args.ref_model_mixup_alpha)
         self.accelerator.wait_for_everyone()
         self.ref_model.eval()
 
