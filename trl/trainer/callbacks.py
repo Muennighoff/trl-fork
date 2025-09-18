@@ -129,10 +129,12 @@ class SyncRefModelCallback(TrainerCallback):
         """
         model: PreTrainedModel = kwargs["model"]
         if self.ref_model is not None and state.global_step % args.ref_model_sync_steps == 0:
-            self.policy_state_dict = self.accelerator.unwrap_model(model).state_dict()
+            # self.policy_state_dict = self.accelerator.unwrap_model(model).state_dict()
+            self.policy_state_dict = self.accelerator.get_state_dict(self.accelerator.unwrap_model(model))
 
     def on_step_end(self, args, state, control, **kwargs):
         self.accelerator.unwrap_model(self.ref_model).load_state_dict(self.policy_state_dict)
+
         # model: PreTrainedModel = kwargs["model"]
         # for target_param, copy_param in zip(self.ref_model.parameters(), model.parameters()):
         #     target_param.data.mul_(1.0 - args.ref_model_mixup_alpha).add_(copy_param.data, alpha=args.ref_model_mixup_alpha)
