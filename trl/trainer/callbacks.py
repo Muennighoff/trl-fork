@@ -14,6 +14,7 @@
 
 import logging
 import os
+from collections.abc import Callable
 from typing import Optional, Union
 
 import pandas as pd
@@ -139,6 +140,39 @@ class SyncRefModelCallback(TrainerCallback):
             if self.accelerator:
                 model = self.accelerator.unwrap_model(model)
             self.sync_target_model(model, self.ref_model, args.ref_model_mixup_alpha)
+
+
+class HumanlineSyncRefModelCallback(TrainerCallback):
+    """
+    Callback to synchronize the model with a reference model (Humanline).
+    """
+
+    def __init__(
+        self,
+        ref_model: Union[PreTrainedModel, torch.nn.Module],
+        accelerator: Optional[Accelerator],
+    ):
+        self.accelerator = accelerator
+        self.ref_model = ref_model
+        self.policy_state_dict = None
+
+    def on_pre_optimizer_step(self, args, state, control, **kwargs):
+        """
+        Update the reference model to have the policy weights.
+        """
+        if self.ref_model is None:
+            return
+        if (state.global_step + 1) % args.humanline_sync_freq == 0:
+            model: PreTrainedModel = kwargs["model"]
+            self.policy_state_dict = self.accelerator.get_state_dict(model)
+
+    def on_step_end(self, args, state, control, **kwargs):
+        if state.global_step % args.humanline_sync_freq == 0:
+            if self.policy_state_dict is None or self.ref_model is None:
+                return
+            self.accelerator.unwrap_model(self.ref_model).load_state_dict(self.policy_state_dict)
+            self.accelerator.wait_for_everyone()
+            self.ref_model.eval()
 
 
 class RichProgressCallback(TrainerCallback):
@@ -583,7 +617,7 @@ class WeaveCallback(TrainerCallback):
         self,
         trainer: Trainer,
         project_name: Optional[str] = None,
-        scorers: Optional[dict[str, callable]] = None,
+        scorers: Optional[dict[str, Callable]] = None,
         generation_config: Optional[GenerationConfig] = None,
         num_prompts: Optional[int] = None,
         dataset_name: str = "eval_dataset",
