@@ -544,7 +544,7 @@ class DPOTrainer(BaseTrainer):
 
             self.add_callback(SyncRefModelCallback(ref_model=self.ref_model, accelerator=self.accelerator))
         
-        if self.args.humanline:
+        if self.humanline:
             self.add_callback(HumanlineSyncRefModelCallback(ref_model=self.ref_model, accelerator=self.accelerator))
 
         if "bco_pair" in self.loss_type:
@@ -837,13 +837,17 @@ class DPOTrainer(BaseTrainer):
 
             ref_chosen_logps = []
             ref_rejected_logps = []
+            ref_per_token_chosen_logps = []
+            ref_per_token_rejected_logps = []
             for padded_batch in tqdm(iterable=data_loader, desc="Train dataset reference log probs"):
-                ref_chosen_logp, ref_rejected_logp = self.compute_ref_log_probs(padded_batch)
-                ref_chosen_logp, ref_rejected_logp = self.accelerator.gather_for_metrics(
-                    (ref_chosen_logp, ref_rejected_logp)
+                ref_chosen_logp, ref_rejected_logp, ref_per_token_chosen_logps, ref_per_token_rejected_logps = self.compute_ref_log_probs(padded_batch)
+                ref_chosen_logp, ref_rejected_logp, ref_per_token_chosen_logps, ref_per_token_rejected_logps = self.accelerator.gather_for_metrics(
+                    (ref_chosen_logp, ref_rejected_logp, ref_per_token_chosen_logps, ref_per_token_rejected_logps)
                 )
                 ref_chosen_logps.append(ref_chosen_logp.cpu())
                 ref_rejected_logps.append(ref_rejected_logp.cpu())
+                ref_per_token_chosen_logps.append(ref_per_token_chosen_logps.cpu())
+                ref_per_token_rejected_logps.append(ref_per_token_rejected_logps.cpu())
 
                 # Unnecessary cache clearing to avoid OOM
                 empty_cache()
@@ -851,12 +855,15 @@ class DPOTrainer(BaseTrainer):
 
             all_ref_chosen_logps = torch.cat(ref_chosen_logps).float().numpy()
             all_ref_rejected_logps = torch.cat(ref_rejected_logps).float().numpy()
+            all_ref_per_token_chosen_logps = torch.cat(ref_per_token_chosen_logps).float().numpy()
+            all_ref_per_token_rejected_logps = torch.cat(ref_per_token_rejected_logps).float().numpy()
 
             self.train_dataset = self.train_dataset.add_column(name="ref_chosen_logps", column=all_ref_chosen_logps)
             self.train_dataset = self.train_dataset.add_column(
                 name="ref_rejected_logps", column=all_ref_rejected_logps
             )
-
+            self.train_dataset = self.train_dataset.add_column(name="ref_per_token_chosen_logps", column=all_ref_per_token_chosen_logps)
+            self.train_dataset = self.train_dataset.add_column(name="ref_per_token_rejected_logps", column=all_ref_per_token_rejected_logps)
             self._precomputed_train_ref_log_probs = True
 
         return super().get_train_dataloader()
@@ -892,18 +899,24 @@ class DPOTrainer(BaseTrainer):
             ref_chosen_logps = []
             ref_rejected_logps = []
             for padded_batch in tqdm(iterable=data_loader, desc="Eval dataset reference log probs"):
-                ref_chosen_logp, ref_rejected_logp = self.compute_ref_log_probs(padded_batch)
-                ref_chosen_logp, ref_rejected_logp = self.accelerator.gather_for_metrics(
-                    (ref_chosen_logp, ref_rejected_logp)
+                ref_chosen_logp, ref_rejected_logp, ref_per_token_chosen_logps, ref_per_token_rejected_logps = self.compute_ref_log_probs(padded_batch)
+                ref_chosen_logp, ref_rejected_logp, ref_per_token_chosen_logps, ref_per_token_rejected_logps = self.accelerator.gather_for_metrics(
+                    (ref_chosen_logp, ref_rejected_logp, ref_per_token_chosen_logps, ref_per_token_rejected_logps)
                 )
                 ref_chosen_logps.append(ref_chosen_logp.cpu())
                 ref_rejected_logps.append(ref_rejected_logp.cpu())
+                ref_per_token_chosen_logps.append(ref_per_token_chosen_logps.cpu())
+                ref_per_token_rejected_logps.append(ref_per_token_rejected_logps.cpu())
 
             all_ref_chosen_logps = torch.cat(ref_chosen_logps).float().numpy()
             all_ref_rejected_logps = torch.cat(ref_rejected_logps).float().numpy()
+            all_ref_per_token_chosen_logps = torch.cat(ref_per_token_chosen_logps).float().numpy()
+            all_ref_per_token_rejected_logps = torch.cat(ref_per_token_rejected_logps).float().numpy()
 
             eval_dataset = eval_dataset.add_column(name="ref_chosen_logps", column=all_ref_chosen_logps)
             eval_dataset = eval_dataset.add_column(name="ref_rejected_logps", column=all_ref_rejected_logps)
+            eval_dataset = eval_dataset.add_column(name="ref_per_token_chosen_logps", column=all_ref_per_token_chosen_logps)
+            eval_dataset = eval_dataset.add_column(name="ref_per_token_rejected_logps", column=all_ref_per_token_rejected_logps)
 
             # Save calculated ref_chosen_logps and ref_rejected_logps to the eval_dataset for subsequent runs
             if self.eval_dataset is not None:
@@ -926,7 +939,7 @@ class DPOTrainer(BaseTrainer):
             if self.ref_adapter_name:
                 self.model.set_adapter(self.model_adapter_name or "default")
 
-    def compute_ref_log_probs(self, batch: dict[str, torch.LongTensor]) -> tuple[torch.Tensor, torch.Tensor]:
+    def compute_ref_log_probs(self, batch: dict[str, torch.LongTensor]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Computes log probabilities of the reference model for a single padded batch of a DPO specific dataset."""
         compte_ref_context_manager = (
             autocast(self.accelerator.device.type) if self._peft_has_been_casted_to_bf16 else nullcontext()
@@ -1071,10 +1084,12 @@ class DPOTrainer(BaseTrainer):
         # Get the log ratios for the chosen and rejected responses
         chosen_logratios = chosen_logps.to(device) - (not self.reference_free) * ref_chosen_logps.to(device)
         rejected_logratios = rejected_logps.to(device) - (not self.reference_free) * ref_rejected_logps.to(device)
-
         if self.humanline:
-            chosen_logratios.clamp_(min=self.humanline_log_eps_P, max=self.humanline_log_eps_R)
-            rejected_logratios.clamp_(min=self.humanline_log_eps_P, max=self.humanline_log_eps_R)
+            # Humanline clipping is applied to the token-level log ratios of the chosen and rejected responses.
+            # The log ratios are then summed to the sequence level to get the final log ratios before calculating the logits.
+            # Shape: (batch_size, sequence_length) -> (batch_size,)
+            chosen_logratios = chosen_logratios.clamp_(min=self.humanline_log_eps_P, max=self.humanline_log_eps_R).sum(-1)
+            rejected_logratios = rejected_logratios.clamp_(min=self.humanline_log_eps_P, max=self.humanline_log_eps_R).sum(-1)
 
         if self.f_divergence_type == FDivergenceType.ALPHA_DIVERGENCE:
             # The alpha-divergence formula: (1 - u^-alpha) / alpha
@@ -1096,6 +1111,11 @@ class DPOTrainer(BaseTrainer):
 
             logratios = logratios.to(self.accelerator.device)
             ref_logratios = ref_logratios.to(self.accelerator.device)
+            if self.humanline:
+                # For non-F-divergence variants of DPO, humanline clipping is applied to the token-level log ratios in a similar way as above.
+                # Shape: (batch_size, sequence_length) -> (batch_size,)
+                logratios = logratios.clamp_(min=self.humanline_log_eps_P, max=self.humanline_log_eps_R).sum(-1)
+                ref_logratios = ref_logratios.clamp_(min=self.humanline_log_eps_P, max=self.humanline_log_eps_R).sum(-1)
             logits = logratios - ref_logratios
 
             if self.f_divergence_type == FDivergenceType.JS_DIVERGENCE:
@@ -1142,6 +1162,10 @@ class DPOTrainer(BaseTrainer):
         elif loss_type == "bco_pair":
             chosen_logratios = chosen_logps - ref_chosen_logps
             rejected_logratios = rejected_logps - ref_rejected_logps
+            if self.humanline:
+                # Applying humanline clipping to the token-level log ratios for 'bco_pair' loss.
+                chosen_logratios = chosen_logratios.clamp_(min=self.humanline_log_eps_P, max=self.humanline_log_eps_R).sum(-1)
+                rejected_logratios = rejected_logratios.clamp_(min=self.humanline_log_eps_P, max=self.humanline_log_eps_R).sum(-1)
             chosen_rewards = self.beta * chosen_logratios
             rejected_rewards = self.beta * rejected_logratios
             rewards = torch.cat((chosen_rewards, rejected_rewards), 0).mean().detach()
@@ -1158,11 +1182,19 @@ class DPOTrainer(BaseTrainer):
             # set to 1 for the winner and 0 for the loser.
             a = chosen_logps - ref_chosen_logps
             b = rejected_logps - ref_rejected_logps
+            if self.humanline:
+                # Applying humanline clipping to the token-level log ratios for 'sppo_hard' loss.
+                a = a.clamp_(min=self.humanline_log_eps_P, max=self.humanline_log_eps_R).sum(-1)
+                b = b.clamp_(min=self.humanline_log_eps_P, max=self.humanline_log_eps_R).sum(-1)
             losses = (a - 0.5 / self.beta) ** 2 + (b + 0.5 / self.beta) ** 2
 
         elif loss_type == "nca_pair":
             chosen_rewards = (chosen_logps - ref_chosen_logps) * self.beta
             rejected_rewards = (rejected_logps - ref_rejected_logps) * self.beta
+            if self.humanline:
+                # Applying humanline clipping to the token-level log ratios for 'nca_pair' loss.
+                chosen_rewards = chosen_rewards.clamp_(min=self.humanline_log_eps_P, max=self.humanline_log_eps_R).sum(-1)
+                rejected_rewards = rejected_rewards.clamp_(min=self.humanline_log_eps_P, max=self.humanline_log_eps_R).sum(-1)
             losses = (
                 -F.logsigmoid(chosen_rewards)
                 - 0.5 * F.logsigmoid(-chosen_rewards)
@@ -1172,6 +1204,10 @@ class DPOTrainer(BaseTrainer):
         elif loss_type == "aot_pair":
             chosen_logratios = chosen_logps - ref_chosen_logps
             rejected_logratios = rejected_logps - ref_rejected_logps
+            if self.humanline:
+                # Applying humanline clipping to the token-level log ratios for 'aot_pair' loss.
+                chosen_logratios = chosen_logratios.clamp_(min=self.humanline_log_eps_P, max=self.humanline_log_eps_R).sum(-1)
+                rejected_logratios = rejected_logratios.clamp_(min=self.humanline_log_eps_P, max=self.humanline_log_eps_R).sum(-1)
             chosen_logratios_sorted, _ = torch.sort(chosen_logratios, dim=0)
             rejected_logratios_sorted, _ = torch.sort(rejected_logratios, dim=0)
             delta = chosen_logratios_sorted - rejected_logratios_sorted
@@ -1183,6 +1219,10 @@ class DPOTrainer(BaseTrainer):
         elif loss_type == "aot":
             logratios = chosen_logps - rejected_logps
             ref_logratios = ref_chosen_logps - ref_rejected_logps
+            if self.humanline:
+                # Applying humanline clipping to the token-level log ratios for 'aot' loss.
+                logratios = logratios.clamp_(min=self.humanline_log_eps_P, max=self.humanline_log_eps_R).sum(-1)
+                ref_logratios = ref_logratios.clamp_(min=self.humanline_log_eps_P, max=self.humanline_log_eps_R).sum(-1)
             logratios_sorted, _ = torch.sort(logratios, dim=0)
             ref_logratios_sorted, _ = torch.sort(ref_logratios, dim=0)
             delta = logratios_sorted - ref_logratios_sorted
@@ -1211,6 +1251,10 @@ class DPOTrainer(BaseTrainer):
             # This loss was discovered with LLM discovery
             logratios = chosen_logps - rejected_logps
             ref_logratios = ref_chosen_logps - ref_rejected_logps
+            if self.humanline:
+                # Applying humanline clipping to the token-level log ratios for 'discopop' loss.
+                logratios = logratios.clamp_(min=self.humanline_log_eps_P, max=self.humanline_log_eps_R).sum(-1)
+                ref_logratios = ref_logratios.clamp_(min=self.humanline_log_eps_P, max=self.humanline_log_eps_R).sum(-1)
             logits = logratios - ref_logratios
             logits = logits * self.beta
             # Modulate the mixing coefficient based on the log ratio magnitudes
@@ -1572,18 +1616,18 @@ class DPOTrainer(BaseTrainer):
                 logits_to_keep = (loss_mask.shape[1] - first_compute_index).item() + 1  # +1 for the first label
                 model_kwargs["logits_to_keep"] = logits_to_keep
 
-            model_kwargs["output_hidden_states"] = True
+                model_kwargs["output_hidden_states"] = True
 
-            if self.padding_free:
-                # Flatten the input_ids, position_ids, and loss_mask
-                # input_ids = [[a, b, c, 0], ->     input_ids = [[a, b, c, d, e, f, g]]
-                #              [d, e, f, g]]     position_ids = [[0, 1, 2, 0, 1, 2, 3]]
-                input_ids = input_ids[attention_mask.bool()].unsqueeze(0)
-                loss_mask = loss_mask[attention_mask.bool()].unsqueeze(0)
-                position_ids = attention_mask.cumsum(1)[attention_mask.bool()].unsqueeze(0) - 1
-                model_kwargs["position_ids"] = position_ids
-            else:
-                model_kwargs["attention_mask"] = attention_mask
+                if self.padding_free:
+                    # Flatten the input_ids, position_ids, and loss_mask
+                    # input_ids = [[a, b, c, 0], ->     input_ids = [[a, b, c, d, e, f, g]]
+                    #              [d, e, f, g]]     position_ids = [[0, 1, 2, 0, 1, 2, 3]]
+                    input_ids = input_ids[attention_mask.bool()].unsqueeze(0)
+                    loss_mask = loss_mask[attention_mask.bool()].unsqueeze(0)
+                    position_ids = attention_mask.cumsum(1)[attention_mask.bool()].unsqueeze(0) - 1
+                    model_kwargs["position_ids"] = position_ids
+                else:
+                    model_kwargs["attention_mask"] = attention_mask
 
             outputs = model(input_ids, **model_kwargs)
             logits = outputs.logits
@@ -1722,7 +1766,11 @@ class DPOTrainer(BaseTrainer):
                 ref_per_token_chosen_logps = batch["ref_per_token_chosen_logps"]
                 ref_per_token_rejected_logps = batch["ref_per_token_rejected_logps"]
             else:
+                # try:
                 ref_chosen_logps, ref_rejected_logps, ref_per_token_chosen_logps, ref_per_token_rejected_logps = self.compute_ref_log_probs(batch)
+                # except Exception as e:
+                #     print(f"Error computing reference log probabilities: {e}")
+                #     print(self.ref_model)
 
             # Initialize combined losses
             losses = 0
@@ -1733,16 +1781,16 @@ class DPOTrainer(BaseTrainer):
             for idx, loss_type in enumerate(self.loss_type):
                 # Compute individual loss using standard DPO loss function
                 if self.humanline:
-                    _losses, _per_token_chosen_rewards, _per_token_rejected_rewards = self.dpo_loss(
-                        model_output["per_token_chosen_logps"], 
-                        model_output["per_token_rejected_logps"], 
-                        ref_per_token_chosen_logps, 
-                        ref_per_token_rejected_logps, 
+                    # Using the token-level log probabilities for the humanline variant.
+                    # Returned chosen and rejected rewards are already summed to get the sequence-level rewards.
+                    _losses, _chosen_rewards, _rejected_rewards = self.dpo_loss(
+                        model_output["per_token_chosen_logps"],
+                        model_output["per_token_rejected_logps"],
+                        ref_per_token_chosen_logps,
+                        ref_per_token_rejected_logps,
                         loss_type,
                         model_output,
                     )
-                    _chosen_rewards = _per_token_chosen_rewards.sum(dim=1)
-                    _rejected_rewards = _per_token_rejected_rewards.sum(dim=1)
                 else:
                     _losses, _chosen_rewards, _rejected_rewards = self.dpo_loss(
                         model_output["chosen_logps"],
